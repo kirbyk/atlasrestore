@@ -1,0 +1,8 @@
+authKey:
+filename:
+dbPath:
+port:
+ssl: true
+certFile: cert.pem
+keyFile: key.pem
+gzipCompressionLevel: 0
