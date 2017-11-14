@@ -1,0 +1,170 @@
+<?xml version="1.0"?>
+
+<project name="atlasrestore-packaging" basedir=".">
+    <property environment="env"/>
+    <property name="build.dir" location="build"/>
+
+
+    <target name="build.dir.make">
+        <mkdir dir="${build.dir}"/>
+    </target>
+
+    <property name="go.root" value="${env.GOROOT}"/>
+    <property name="go.path" value="${build.dir}/go-dependencies" />
+    <property name="go.arch" value="amd64"/>
+
+    <macrodef name="gpm">
+        <sequential>
+            <mkdir dir="${go.path}"/>
+            <echo message="Getting Go dependencies..."/>
+            <echo message="GOROOT - ${go.root}"/>
+            <echo message="GOPATH - ${go.path}"/>
+            <echo message="GOARCH - ${go.arch}"/>
+
+            <exec executable="curl" failonerror="true">
+                <arg value="-sO"/>
+                <arg value="https://raw.githubusercontent.com/pote/gpm/v1.4.0/bin/gpm"/>
+            </exec>
+
+            <exec executable="bash" failonerror="true">
+                <arg value="gpm"/>
+                <arg value="install"/>
+                <arg value="./Godeps"/>
+                <env key="GOROOT" value="${go.root}"/>
+                <env key="GOPATH" value="${go.path}"/>
+                <env key="GOARCH" value="${go.arch}"/>
+            </exec>
+        </sequential>
+    </macrodef>
+
+    <macrodef name="go-build">
+        <attribute name="sourcedir" />
+        <attribute name="version" />
+        <attribute name="versionfile" />
+        <attribute name="gitversionfile" />
+        <attribute name="destfile" />
+        <sequential>
+            <copy todir="${go.path}/src/github.com/10gen/atlasrestore">
+                <fileset dir="@{sourcedir}/">
+                    <include name="*.go"/>
+                    <include name="*.yaml"/>
+                </fileset>
+            </copy>
+
+            <replaceregexp file="${go.path}/src@{versionfile}"
+                match="VersionStr\s+=\s+&quot;(.*)&quot;"
+                replace="VersionStr = &quot;@{version}&quot;"
+                byline="true"/>
+
+            <exec executable="git" failonerror="true" outputproperty="build.gitversion">
+                <arg value="rev-parse"/>
+                <arg value="HEAD"/>
+            </exec>
+
+            <replaceregexp file="${go.path}/src@{gitversionfile}"
+                           match="DEV"
+                           replace="${build.gitversion}" />
+
+            <exec executable="${env.GOROOT}/bin/go" failonerror="true">
+                <arg value="build" />
+                <arg value="-o" />
+                <arg value="@{destfile}"/>
+
+                <arg value="-x" />
+
+                <env key="GOROOT" value="${go.root}"/>
+                <env key="GOPATH" value="${go.path}"/>
+                <env key="GOARCH" value="${go.arch}"/>
+            </exec>
+            <chmod file="@{destfile}" perm="755"/>
+        </sequential>
+    </macrodef>
+
+    <!--
+    START packaging helpers
+    -->
+
+    <target name="git.set-version">
+        <exec executable="git" failonerror="false" resultproperty="git.exit.code" dir="." outputproperty="git.version">
+            <arg value="log"/>
+            <arg value="-1"/>
+            <arg value="--pretty=format:%T"/>
+        </exec>
+    </target>
+
+    <macrodef name="create-tar-gz">
+        <attribute name="out-filename" />
+        <element name="files" />
+        <sequential>
+            <tar destfile="${build.dir}/@{out-filename}.tar">
+                <files />
+            </tar>
+            <gzip destfile="${build.dir}/@{out-filename}.tar.gz"
+                 src="${build.dir}/@{out-filename}.tar"/>
+            <delete file="${build.dir}/@{out-filename}.tar"/>
+        </sequential>
+    </macrodef>
+
+    <target name="rpm-package.set-arch">
+        <property name="rpm-package.arch" value="x86_64"/>
+        <property name="rpm-setarch.arch" value="x86_64"/>
+    </target>
+    <!-- END packaging helpers -->
+
+    <!--
+        Create an RPM Packaged Automation Agent
+
+        Prerequisites:
+        rpmbuild - `yum install rpm-build`
+        golang - `GOROOT` must be set or passed in as `go.root`
+
+        Parameters:
+        atlas-restore.version (required)
+        atlas-restore.package-version (required)
+    -->
+    <target name="atlas-restore.create-rpm" description="Build RPM" depends="atlas-restore.build,rpm-package.set-arch">
+        <delete dir="${build.dir}/rpm-temp" />
+        <copy todir="${build.dir}/rpm-temp/root">
+            <fileset dir="rpm/root"/>
+        </copy>
+        <copy file="config.yaml" tofile="${build.dir}/rpm-temp/root/etc/mongodb-mms/atlas-restore.yaml" />
+        <copy file="${atlas-restore.build-out}" tofile="${build.dir}/rpm-temp/root/opt/mongodb-mms-atlas-restore/bin/mongodb-mms-atlas-restore" />
+        <copy file="rpm/atlas-restore.spec" todir="${build.dir}/rpm-temp/build"/>
+        <replace file="${build.dir}/rpm-temp/build/atlas-restore.spec">
+            <replacefilter token="@VERSION@" value="${atlas-restore.version}" />
+            <replacefilter token="@PACKAGE_VERSION@" value="${atlas-restore.package-version}" />
+            <replacefilter token="@ARCHITECTURE@" value="${rpm-package.arch}" />
+        </replace>
+
+        <echo message="Generating atlas-restore RPM..."/>
+        <exec executable="setarch" failonerror="true">
+            <arg value="${rpm-setarch.arch}"/>
+            <arg value="rpmbuild"/>
+            <arg value="--define"/>
+            <arg value="_topdir ${build.dir}/rpm-temp/build"/>
+            <arg value="--define"/>
+            <arg value="_builddir ${build.dir}/rpm-temp/build"/>
+            <arg value="--define"/>
+            <arg value="_sourcedir ${build.dir}/rpm-temp/root"/>
+            <arg value="-bb"/>
+            <arg value="${build.dir}/rpm-temp/build/atlas-restore.spec"/>
+        </exec>
+
+        <copy todir="${build.dir}">
+            <fileset dir="${build.dir}/rpm-temp/build/RPMS/${rpm-package.arch}" includes="*.rpm"/>
+        </copy>
+    </target>
+
+    <!-- START local build -->
+    <property name="atlas-restore.build-out" value="${build.dir}/mongodb-mms-atlas-restore" />
+
+    <target name="atlas-restore.build" description="Build binary" depends="build.dir.make">
+        <gpm/>
+        <go-build sourcedir="."
+                  version="${atlas-restore.version}"
+                  versionfile="/github.com/10gen/atlasrestore/version.go"
+                  gitversionfile="/github.com/10gen/atlasrestore/version.go"
+                  destfile="${atlas-restore.build-out}" />
+    </target>
+    <!-- END local build -->
+</project>

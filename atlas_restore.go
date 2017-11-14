@@ -133,6 +133,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	log.Printf("Atlas Restore Server. Version %s Hash %s", VersionStr, GitCommitId)
+
 	http.HandleFunc(strings.Join([]string{"", config.AuthKey, config.Filename}, "/"), func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Sending files from %s as %s.\n", config.DbPath, config.Filename)
 		if err := writeTarGz(config.DbPath, config.TarDirectory, config.GzipCompressionLevel, w); err != nil {

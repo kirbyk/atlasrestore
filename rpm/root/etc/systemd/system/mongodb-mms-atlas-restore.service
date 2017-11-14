@@ -1,0 +1,23 @@
+[Unit]
+After=network.target
+Description=MongoDB Atlas Restore Server
+
+[Service]
+ExecStart=/opt/mongodb-mms-atlas-restore/bin/mongodb-mms-atlas-restore -config /etc/mongodb-mms/atlas-restore.yaml
+LimitAS=infinity
+LimitCPU=infinity
+LimitFSIZE=infinity
+LimitNOFILE=64000
+LimitRSS=infinity
+PIDFile=/var/run/mongodb-mms-atlas-restore/mongodb-mms-atlas-restore.pid
+Restart=on-failure
+RuntimeDirectory=mongodb-mms-atlas-restore
+RuntimeDirectoryMode=0755
+StartLimitBurst=5
+StartLimitInterval=600
+TimeoutStopSec=30
+UMask=022
+User=mongod
+
+[Install]
+WantedBy=multi-user.target

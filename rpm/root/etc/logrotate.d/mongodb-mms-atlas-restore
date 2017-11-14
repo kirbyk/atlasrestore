@@ -1,0 +1,9 @@
+/var/log/mongodb-mms-atlas-restore/atlas-restore.log {
+    compress
+    daily
+    rotate 5
+    missingok
+    postrotate
+        /usr/bin/pkill -USR1 -f mongodb-mms-atlas-restore
+    endscript
+}
