@@ -1,5 +1,6 @@
 authKey:
 filename:
+tarDirectory:
 dbPath:
 port:
 ssl: true

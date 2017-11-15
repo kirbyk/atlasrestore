@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 )
@@ -25,11 +26,13 @@ type Config struct {
 	KeyFile              string `yaml:"keyFile"`
 	AuthKey              string `yaml:"authKey"`
 	Filename             string `yaml:"filename"`
+	TarDirectory         string `yaml:"tarDirectory"`
 	GzipCompressionLevel int    `yaml:"gzipCompressionLevel"`
 }
 
-func addToTar(tw *tar.Writer, path string) error {
-	file, err := os.Open(path)
+func addToTar(tw *tar.Writer, dbPath, tarParentDir, relPath string) error {
+	fullPath := path.Join(dbPath, relPath)
+	file, err := os.Open(fullPath)
 	if err != nil {
 		return err
 	}
@@ -45,22 +48,26 @@ func addToTar(tw *tar.Writer, path string) error {
 		return err
 	}
 
-	header.Name = path
+	tarPath := tarParentDir
+	header.Name = path.Join(tarParentDir, relPath)
 	if err := tw.WriteHeader(header); err != nil {
 		return err
 	}
 
-	log.Printf("Streaming %s, size %d\n", path, fileInfo.Size())
+	log.Printf("Streaming %s as %s, size %d\n", fullPath, tarPath, fileInfo.Size())
 	if _, err := io.Copy(tw, file); err != nil {
 		return err
 	}
 
-	log.Printf("Finished streaming %s\n", path)
+	log.Printf("Finished streaming %s\n", fullPath)
 	return nil
 }
 
-func listFiles(parent string) (<-chan string, error) {
-	files, err := ioutil.ReadDir(parent)
+// files in the channel are returned as relPaths (without the leading ./)
+// from the given parent
+func listFiles(parent, relDirPath string) (<-chan string, error) {
+	dirPath := path.Join(parent, relDirPath)
+	files, err := ioutil.ReadDir(dirPath)
 	if err != nil {
 		return nil, err
 	}
@@ -71,11 +78,11 @@ func listFiles(parent string) (<-chan string, error) {
 		n := len(files)
 		for i := 0; i < n; i++ {
 			child := files[i]
-			path := parent + string(os.PathSeparator) + child.Name()
+			relChildPath := path.Join(relDirPath, child.Name())
 			if !child.IsDir() {
-				ch <- path
+				ch <- relChildPath
 			} else {
-				files, err := listFiles(path)
+				files, err := listFiles(parent, relChildPath)
 				if err != nil {
 					panic(err)
 				}
@@ -89,7 +96,7 @@ func listFiles(parent string) (<-chan string, error) {
 	return ch, nil
 }
 
-func writeTarGz(inputDir string, gzipCompressionLevel int, w io.Writer) error {
+func writeTarGz(dbDir, tarParentDir string, gzipCompressionLevel int, w io.Writer) error {
 	gw, err := gzip.NewWriterLevel(w, gzipCompressionLevel)
 	if err != nil {
 		return err
@@ -98,13 +105,13 @@ func writeTarGz(inputDir string, gzipCompressionLevel int, w io.Writer) error {
 	tw := tar.NewWriter(gw)
 	defer tw.Close()
 
-	iter, err := listFiles(inputDir)
+	iter, err := listFiles(dbDir, ".")
 	if err != nil {
 		return err
 	}
-	for f := range iter {
-		if err := addToTar(tw, f); err != nil {
-			log.Printf("Error writing file %s. Err: %v\n", f, err)
+	for relPath := range iter {
+		if err := addToTar(tw, dbDir, tarParentDir, relPath); err != nil {
+			log.Printf("Error writing file %s. Err: %v\n", relPath, err)
 			return err
 		}
 	}
@@ -125,9 +132,10 @@ func main() {
 		log.Printf("Error parsing all required settings: %v\n", err)
 		os.Exit(1)
 	}
+
 	http.HandleFunc(strings.Join([]string{"", config.AuthKey, config.Filename}, "/"), func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Sending files from %s as %s.\n", config.DbPath, config.Filename)
-		if err := writeTarGz(config.DbPath, config.GzipCompressionLevel, w); err != nil {
+		if err := writeTarGz(config.DbPath, config.TarDirectory, config.GzipCompressionLevel, w); err != nil {
 			log.Printf("Error generating tar gz %s: %v\n", config.Filename, err)
 			return
 		}
@@ -177,6 +185,10 @@ func parseConfig(file string) (*Config, error) {
 
 	if config.Filename == "" {
 		return nil, errors.New("Requires output filename")
+	}
+
+	if config.TarDirectory == "" {
+		return nil, errors.New("Requires tar directory")
 	}
 
 	if config.GzipCompressionLevel < gzip.DefaultCompression || config.GzipCompressionLevel > gzip.BestCompression {
