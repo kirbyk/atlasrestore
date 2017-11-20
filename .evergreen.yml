@@ -1,0 +1,68 @@
+command_type: system
+stepback: true
+
+functions:
+  "fetch source":
+    - command: git.get_project
+      params:
+        directory: atlasrestore
+    - command: git.apply_patch
+      params:
+        directory: atlasrestore
+
+  "generate expansions":
+    - command: shell.exec
+      params:
+        working_dir: atlasrestore
+        script: |
+          COMMIT_EPOCH_SECS=`git show --pretty=format:%ct -s`
+          BINARY_VERSION="`sed -n 's/[[:space:]]*VersionStr[[:space:]]*= \"\(.*\)\"/\1/p' version.go`.$COMMIT_EPOCH_SECS"
+          echo "binary_version: $BINARY_VERSION" | tee expansions.yml
+          PATCH_DIR=""
+          if [ "${is_patch|}" = "true" ]; then
+            PATCH_DIR="patch-builds/${version_id}/"
+          fi
+    - command: expansions.update
+      params:
+        file: atlasrestore/expansions.yml
+
+  "build rpm":
+    - command: shell.exec
+      params:
+        working_dir: atlasrestore
+        script: |
+          set -vx
+          java -version
+          ant -version
+          ant -v atlas-restore.create-rpm -Datlas-restore.version=${binary_version} -Datlas-restore.package-version=1
+
+  "upload rpm":
+    - command: s3.put
+      params:
+        aws_key: ${aws_key}
+        aws_secret: ${aws_secret}
+        local_file: atlasrestore/build/mongodb-mms-atlas-restore-${binary_version}-1.x86_64.rpm
+        remote_file: atlasrestore/${patch_dir}mongodb-mms-atlas-restore-${binary_version}-1.x86_64.rpm
+        bucket: mciuploads
+        permissions: public-read
+        content_type: ${content_type|application/x-rpm}
+        display_name: RPM
+
+tasks:
+
+- name: BuildRPM
+  priority: 5
+  commands:
+    - func: "fetch source"
+    - func: "generate expansions"
+    - func: "build rpm"
+    - func: "upload rpm"
+
+buildvariants:
+
+- name: rhel7
+  display_name: RHEL 7
+  run_on:
+    - rhel70
+  tasks:
+    - "BuildRPM"
