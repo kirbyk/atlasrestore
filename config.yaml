@@ -2,6 +2,7 @@ authKey:
 filename:
 tarDirectory:
 dbPath:
+downloadMode: true
 port:
 ssl: true
 certFile: cert.pem
