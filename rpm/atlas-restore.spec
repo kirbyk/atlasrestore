@@ -37,7 +37,6 @@ rm -rf $RPM_BUILD_ROOT
 %post
 # On install
 if test $1 = 1; then
-    setcap cap_net_bind_service+ep /opt/mongodb-mms-atlas-restore/bin/mongodb-mms-atlas-restore
     systemctl daemon-reload >/dev/null 2>&1
     systemctl preset mongodb-mms-atlas-restore.service >/dev/null 2>&1
 fi
