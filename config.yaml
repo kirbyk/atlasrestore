@@ -8,3 +8,5 @@ ssl: true
 certFile: cert.pem
 keyFile: key.pem
 gzipCompressionLevel: 0
+centralUrl:
+jobId:

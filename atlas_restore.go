@@ -3,11 +3,9 @@ package main
 import (
 	"archive/tar"
 	"compress/gzip"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"gopkg.in/yaml.v2"
 	"html"
 	"io"
 	"io/ioutil"
@@ -17,7 +15,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync/atomic"
+
+	"gopkg.in/yaml.v2"
 )
 
 type Config struct {
@@ -31,12 +30,8 @@ type Config struct {
 	TarDirectory         string `yaml:"tarDirectory"`
 	GzipCompressionLevel int    `yaml:"gzipCompressionLevel"`
 	DownloadMode         bool   `yaml:"downloadMode"`
-}
-
-type ManualDownloadStats struct {
-	InProgress uint32
-	Failed     uint32
-	Succeeded  uint32
+	CentralUrl           string `yaml:"centralUrl"`
+	JobId                string `yaml:"jobId"`
 }
 
 func addToTar(tw *tar.Writer, dbPath, tarParentDir, relPath string) error {
@@ -144,24 +139,22 @@ func main() {
 
 	log.Printf("Atlas Restore Server. Version %s Hash %s", VersionStr, GitCommitId)
 
-	var numSucceeded uint32 = 0
-	var numFailed uint32 = 0
-	var numInProgress uint32 = 0
+	stats := NewStatsTracker(
+		config.CentralUrl,
+		config.JobId,
+		config.AuthKey,
+		config.DownloadMode)
 
 	http.HandleFunc(strings.Join([]string{"", config.AuthKey, config.Filename}, "/"), func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Sending files from %s as %s.\n", config.DbPath, config.Filename)
-		atomic.AddUint32(&numInProgress, 1)
-		defer func() {
-			// decrement, see https://golang.org/pkg/sync/atomic/#AddUint32
-			atomic.AddUint32(&numInProgress, ^uint32(0))
-		}()
+		stats.InProgress()
 
 		if err := writeTarGz(config.DbPath, config.TarDirectory, config.GzipCompressionLevel, w); err != nil {
 			log.Printf("Error generating tar gz %s: %v\n", config.Filename, err)
-			atomic.AddUint32(&numFailed, 1)
+			stats.Failed()
 			return
 		}
-		atomic.AddUint32(&numSucceeded, 1)
+		stats.Succeeded()
 		log.Printf("Done serving %s\n", config.Filename)
 	})
 
@@ -170,20 +163,6 @@ func main() {
 		w.WriteHeader(http.StatusForbidden)
 		fmt.Fprintf(w, "Access denied\n")
 	})
-
-	if config.DownloadMode {
-		http.HandleFunc(strings.Join([]string{"", config.AuthKey, "stats"}, "/"), func(w http.ResponseWriter, r *http.Request) {
-			stats := ManualDownloadStats{
-				InProgress: numInProgress,
-				Succeeded:  numSucceeded,
-				Failed:     numFailed,
-			}
-
-			log.Printf("Stats for manual download mode. InProgress: %v Succeeded: %v Failed: %v", stats.InProgress, stats.Succeeded, stats.Failed)
-
-			json.NewEncoder(w).Encode(stats)
-		})
-	}
 
 	if config.Ssl {
 		log.Printf("Starting https server with config %v\n", config)
